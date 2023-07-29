@@ -1,0 +1,294 @@
+import * as utils from 'game/utils';
+import * as prototypes from 'game/prototypes';
+import * as constants from 'game/constants';
+
+
+const my_spawn = utils.getObjectsByPrototype(prototypes.StructureSpawn).find(spawn => spawn.my);
+const enemy_spawn = utils.getObjectsByPrototype(prototypes.StructureSpawn).find(spawn => !spawn.my);
+
+const sources = utils.getObjectsByPrototype(prototypes.StructureContainer);
+const my_sources = utils.findInRange(my_spawn, sources, 5);
+
+class POS {
+    x = null;
+    y = null;
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+    }
+}
+
+const north_point = new POS(my_spawn.x > 50 ? my_spawn.x - 10 : my_spawn.x + 10, my_spawn.y - 35);
+const south_point = new POS(my_spawn.x > 50 ? my_spawn.x - 10 : my_spawn.x + 10, my_spawn.y + 35);
+const middle_point = new POS(my_spawn.x > 50 ? my_spawn.x - 4 : my_spawn.x + 4, my_spawn.y);
+
+
+// Creep Control Block
+class CCB {
+    id = null;
+    creep = null;
+    generation = 0;
+    role = null;
+    body = null;
+    source = null;
+    target = null;
+}
+var ccb_list = [];
+
+class Mover extends CCB {
+    constructor(source, target) {
+        super();
+        this.role = 'Mover';
+        this.body = [constants.MOVE, constants.CARRY];
+        this.source = source;
+        this.target = target;
+    }
+    step(stat) {
+        if (!this.source || !this.source.store) {
+            this.source = utils.findClosestByPath(this.creep, utils.getObjectsByPrototype(prototypes.StructureContainer).filter(source => source.store.getUsedCapacity(constants.RESOURCE_ENERGY) > 0));
+            if (!this.source || !this.source.store) {
+                return;
+            }
+        }
+
+        if (this.creep && this.creep.store) {
+            if (this.creep.store.getFreeCapacity(constants.RESOURCE_ENERGY)) {
+                if (this.source.store.getUsedCapacity(constants.RESOURCE_ENERGY) == 0) {
+                    this.source = utils.findClosestByPath(this.creep, utils.getObjectsByPrototype(prototypes.StructureContainer).filter(source => source.store.getUsedCapacity(constants.RESOURCE_ENERGY) > 0));
+                    console.log("Find new source: " + this.source)
+                    if (!this.source || !this.source.store) {
+                        return;
+                    }
+                }
+
+                if (this.creep.withdraw(this.source, constants.RESOURCE_ENERGY) == constants.ERR_NOT_IN_RANGE) {
+                    this.creep.moveTo(this.source);
+                }
+            } else {
+                if (this.creep.transfer(this.target, constants.RESOURCE_ENERGY) == constants.ERR_NOT_IN_RANGE) {
+                    this.creep.moveTo(this.target);
+                }
+            }
+        }
+    }
+}
+
+class Builder extends CCB {
+    constructor() {
+        super();
+        this.role = 'Builder';
+        this.body = [constants.WORK, constants.CARRY, constants.MOVE];
+        this.status = 'waiting';
+        this.target = null;
+    }
+    step(stat) {
+
+        if (!this.source || !this.source.store) {
+            this.source = utils.findClosestByPath(this.creep, utils.getObjectsByPrototype(prototypes.StructureContainer).filter(source => source.store.getUsedCapacity(constants.RESOURCE_ENERGY) > 0));
+            if (!this.source || !this.source.store) {
+                return;
+            }
+        }
+
+        if (!this.target || this.target.progress == this.target.progressTotal) {
+            var construction_site = utils.findClosestByPath(this.creep, utils.getObjectsByPrototype(prototypes.ConstructionSite).filter(site => site.my));
+            if (construction_site) {
+                console.log("Building site: " + construction_site);
+                this.target = construction_site;
+            }
+        }
+
+        if (this.creep && this.creep.store) {
+            if (this.creep.store.getUsedCapacity(constants.RESOURCE_ENERGY) == 0) {
+                if (this.source.store.getUsedCapacity(constants.RESOURCE_ENERGY) == 0) {
+                    this.source = utils.findClosestByPath(this.creep, utils.getObjectsByPrototype(prototypes.StructureContainer).filter(source => source.store.getUsedCapacity(constants.RESOURCE_ENERGY) > 0));
+                    console.log("Find new source: " + this.source)
+                    if (!this.source || !this.source.store) {
+                        return;
+                    }
+                }
+
+                if (this.creep.withdraw(this.source, constants.RESOURCE_ENERGY) == constants.ERR_NOT_IN_RANGE) {
+                    this.creep.moveTo(this.source);
+                }
+            } else {
+                // var towers = utils.getObjectsByPrototype(prototypes.StructureTower).filter(tower => tower.my);
+                // if (towers.length > 0) {
+                // var tower = utils.findClosestByPath(this.creep, towers);
+                // if (tower) {
+                // if (this.creep.transfer(tower, constants.RESOURCE_ENERGY) == constants.ERR_NOT_IN_RANGE) {
+                // this.creep.moveTo(tower);
+                // }
+                // }
+                // } else {
+                if (this.creep.build(this.target) == constants.ERR_NOT_IN_RANGE) {
+                    this.creep.moveTo(this.target);
+                }
+                // }
+            }
+        }
+    }
+}
+
+class RangedAttacker extends CCB {
+    constructor() {
+        super();
+        this.role = 'RangedAttacker';
+        // this.body = [constants.MOVE, constants.MOVE, constants.MOVE, constants.MOVE, constants.MOVE, constants.MOVE, constants.MOVE, constants.MOVE, constants.RANGED_ATTACK, constants.HEAL, constants.RANGED_ATTACK];
+        this.body = [constants.MOVE, constants.MOVE, constants.MOVE, constants.MOVE, constants.MOVE, constants.MOVE, constants.MOVE, constants.MOVE, constants.MOVE, constants.RANGED_ATTACK, constants.MOVE, constants.RANGED_ATTACK];
+        this.status = 'waiting';
+    }
+    step(stat) {
+        if (this.creep) {
+            if (this.status == 'waiting') {
+                var near_enemies = utils.findInRange(this.creep, stat.enemies, 50);
+                var near_freinds = utils.findInRange(this.creep, stat.friends, 3);
+                if (near_enemies.length > 0 || near_freinds.length > 3) {
+                    this.status = 'fighting';
+                } else {
+                    this.creep.moveTo(this.id % 2 == 0 ? north_point : south_point);
+                    // this.creep.moveTo(middle_point);
+                    return;
+                }
+            }
+
+            if (stat.enemies.length > 0) {
+                var closest = utils.findClosestByRange(this.creep, stat.enemies);
+                if (closest) {
+                    var closest_dist = utils.getRange(this.creep, closest);
+                    if (closest_dist < 3) {
+                        this.creep.moveTo(my_spawn);
+                        this.creep.rangedAttack(closest);
+                    } else if (closest_dist > 30) {
+                    // (closest_dist > utils.getRange(this.creep, enemy_spawn) || Math.abs(closest.y - this.creep.y) > 50 && Math.abs(closest.x - my_spawn.x) > 40) {
+                        if (this.creep.rangedAttack(enemy_spawn) == constants.ERR_NOT_IN_RANGE) {
+                            this.creep.moveTo(enemy_spawn);
+                        }
+                    } else {
+                        if (this.creep.rangedAttack(closest) == constants.ERR_NOT_IN_RANGE) {
+                            this.creep.moveTo(closest);
+                        }
+                    }
+                }
+            } else {
+                if (this.creep.rangedAttack(enemy_spawn) == constants.ERR_NOT_IN_RANGE) {
+                    this.creep.moveTo(enemy_spawn);
+                }
+            }
+
+            
+            if (this.creep.hits < this.creep.hitsMax) {
+                this.creep.heal(this.creep);
+            } else {
+                var hurt_friends = utils.findInRange(this.creep, stat.friends.filter(friend => friend.hits < friend.hitsMax), 1);
+                if (hurt_friends.length > 0) {
+                    this.creep.heal(hurt_friends[0]);
+                } else {
+                    hurt_friends = utils.findInRange(this.creep, stat.friends.filter(friend => friend.hits < friend.hitsMax), 3);
+                    if (hurt_friends.length > 0) {
+                        this.creep.rangedHeal(hurt_friends[0]);
+                    }
+                }
+            }
+        }
+    }
+}
+
+class Healer extends CCB {
+    constructor() {
+        super();
+        this.role = 'Healer';
+        this.body = [constants.MOVE, constants.MOVE, constants.MOVE, constants.MOVE, constants.MOVE, constants.HEAL, constants.HEAL];
+    }
+    step(stat) {
+        if (this.creep) {
+            if (this.creep.hits < this.creep.hitsMax) {
+                this.creep.heal(this.creep);
+            } else {
+                var hurt_friends = utils.findInRange(this.creep, stat.friends.filter(friend => friend.hits < friend.hitsMax), 1);
+                if (hurt_friends.length > 0) {
+                    this.creep.heal(hurt_friends[0]);
+                } else {
+                    hurt_friends = utils.findInRange(this.creep, stat.friends.filter(friend => friend.hits < friend.hitsMax), 3);
+                    if (hurt_friends.length > 0) {
+                        this.creep.rangedHeal(hurt_friends[0]);
+                    }
+                }
+            }
+
+            var closest_hurt_friend = utils.findClosestByRange(this.creep, stat.friends.filter(friend => friend.hits < friend.hitsMax));
+            if (closest_hurt_friend) {
+                this.creep.moveTo(closest_hurt_friend);
+            } else {
+                var closest_attacker = utils.findClosestByRange(this.creep, stat.friends.filter(friend => friend.body.find(part => part.type == constants.ATTACK || part.type == constants.RANGED_ATTACK)));
+                if (closest_attacker) {
+                    this.creep.moveTo(closest_attacker);
+                }
+            }
+        }
+    }
+}
+
+function init() {
+
+    console.log("Initializing ...")
+    console.log("my sources count: " + my_sources.length)
+
+    // utils.createConstructionSite(my_spawn, prototypes.StructureRampart);
+    // utils.createConstructionSite(new POS(my_spawn.x, my_spawn.y - 1), prototypes.StructureTower);
+
+    for (const source of my_sources) {
+        ccb_list.push(new Mover(source, my_spawn));
+        ccb_list.push(new Mover(source, my_spawn));
+    }
+
+    // ccb_list.push(new Builder());
+}
+
+var inited = false;
+var id_cnt = 0;
+export function loop() {
+    // Your code goes here
+    if (!inited) {
+        init();
+        inited = true;
+    }
+
+    var stat = {};
+    stat.enemies = utils.getObjectsByPrototype(prototypes.Creep).filter(creep => !creep.my && creep.body.find(part => part.type == constants.ATTACK || part.type == constants.RANGED_ATTACK || part.type == constants.HEAL));
+    stat.friends = utils.getObjectsByPrototype(prototypes.Creep).filter(creep => creep.my && creep.body.find(part => part.type == constants.ATTACK || part.type == constants.RANGED_ATTACK || part.type == constants.HEAL));
+
+    for (var ccb of ccb_list) {
+        if (ccb.creep) {
+            ccb.step(stat);
+        }
+    }
+
+    // var towers = utils.getObjectsByPrototype(prototypes.StructureTower).filter(tower => tower.my);
+    // for (var tower of towers) {
+    // var target = utils.findClosestByRange(tower, stat.enemies);
+    // if (target) {
+    // tower.attack(target);
+    // }
+    // }
+
+    var spawning = false;
+    for (var ccb of ccb_list) {
+        if (!ccb.creep || ccb.creep.role == 'Mover' && !ccb.creep.body.find(part => part.type == constants.MOVE)) {
+            const spawn_result = my_spawn.spawnCreep(ccb.body);
+            ccb.creep = spawn_result.object;
+            if (ccb.creep) {
+                ccb.id = id_cnt++;
+                console.log("New creep spawned! (role: " + ccb.role + ", generation: " + ccb.generation + ", id: " + ccb.id + ")");
+                ccb.generation++;
+            }
+            spawning = true;
+            break;
+        }
+    }
+
+    if (!spawning) {
+        ccb_list.push(new RangedAttacker());
+        // ccb_list.push(new Healer());
+    }
+}
